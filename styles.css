@@ -419,3 +419,42 @@ a{color:var(--accent);text-decoration:none}
 .set-row:last-child{border-bottom:0}
 .set-row .e{font-size:17px;width:24px;text-align:center}
 .set-row .ar{margin-left:auto;color:var(--text3);font-size:12px}
+
+/* ---------- 맛집 리스트 ---------- */
+.food{display:flex;align-items:flex-start;gap:11px;padding:11px 13px;border-bottom:1px solid var(--line)}
+.food:last-child{border-bottom:0}
+.food.tried{opacity:.55}
+.food.tried .food-t{text-decoration:line-through;text-decoration-color:var(--text3)}
+.food-ic{
+  width:38px;height:38px;border-radius:12px;flex-shrink:0;display:grid;place-items:center;
+  font-size:18px;background:var(--hot-soft);transition:transform .12s;
+}
+.food-ic:active{transform:scale(.9)}
+.food.tried .food-ic{background:var(--ok-soft)}
+.food-b{flex:1;min-width:0}
+.food-t{font-size:14px;font-weight:800;letter-spacing:-.2px}
+.food-s{font-size:11.5px;color:var(--text2);margin-top:2px;line-height:1.4}
+.food-btns{display:flex;flex-wrap:wrap;gap:5px;margin-top:8px}
+.food-btns .mini{padding:5px 9px;font-size:11px}
+
+/* ---------- 날짜 편집 행 ---------- */
+.day-row{
+  background:var(--card2);border:1px solid var(--line);border-radius:13px;
+  padding:10px 11px;margin-bottom:9px;
+}
+.day-row-n{display:flex;align-items:center;gap:8px;font-size:12px;margin-bottom:8px}
+.day-row-n b{font-size:12.5px}
+.day-row-n span{color:var(--text2);font-weight:700}
+.day-row-n em{font-style:normal;font-size:11px;color:var(--accent);font-weight:700}
+.day-row-n em.mute{color:var(--text3)}
+.day-row-n .row-x{
+  margin-left:auto;width:26px;height:26px;border-radius:8px;display:grid;place-items:center;
+  background:var(--card);border:1px solid var(--line2);color:var(--text3);font-size:12px;
+}
+.day-row-n .row-x:active{background:var(--hot-soft);color:var(--hot)}
+.day-row input{
+  width:100%;padding:9px 11px;border-radius:10px;background:var(--card);
+  border:1px solid var(--line2);font-size:14px;outline:none;margin-bottom:6px;
+}
+.day-row input:last-child{margin-bottom:0}
+.day-row input:focus{border-color:var(--accent)}

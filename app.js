@@ -23,6 +23,7 @@ const TYPES = {
   '휴식': { e:'🌿', c:'#14b8a6' },
   '기타': { e:'✨', c:'var(--text2)' }
 };
+const FOOD_KINDS = { '맛집':'🍽️', '카페':'☕', '디저트':'🍰', '바':'🍷', '시장':'🧺', '기타':'✨' };
 const DOC_TYPES = {
   '항공권':'✈️', '기차표':'🚄', '입장권':'🎟️', '숙소':'🏨',
   '보험':'🛡️', '렌터카':'🚗', '식당예약':'🍽️', '기타':'📄'
@@ -32,15 +33,46 @@ const DOW = ['일','월','화','수','목','금','토'];
 /* ==========================================================
    저장 / 불러오기
    ========================================================== */
+let firstRun = false;
+
 function load(){
   try{
     const raw = localStorage.getItem(KEY);
     if (raw){ trip = JSON.parse(raw); }
   }catch(e){ console.warn('저장 데이터 로드 실패', e); }
   if (!trip || !Array.isArray(trip.days) || !trip.days.length){
-    trip = structuredClone(DEFAULT_TRIP);
+    /* 처음 여는 경우 — 샘플이 아니라 오늘부터 3일짜리 빈 여행으로 시작 */
+    trip = newTrip('나의 여행', todayStr(), addDays(todayStr(), 2), '');
+    firstRun = true;
   }
   normalize();
+}
+
+/* 빈 여행 만들기 */
+function newTrip(title, start, end, city){
+  return {
+    title: title || '나의 여행',
+    subtitle: city || '',
+    travelers: [],
+    days: dateRange(start, end).map(date => ({ date, city: city || '', memo:'', items:[] })),
+    food: [],
+    docs: []
+  };
+}
+/* start~end 사이 날짜 배열 (최대 60일) */
+function dateRange(start, end){
+  const out = [];
+  let cur = start;
+  for (let i = 0; i < 60; i++){
+    out.push(cur);
+    if (cur >= end) break;
+    cur = addDays(cur, 1);
+  }
+  return out;
+}
+function addDays(s, n){
+  const d = parseD(s); d.setDate(d.getDate() + n);
+  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
 }
 function save(){
   try{ localStorage.setItem(KEY, JSON.stringify(trip)); }
@@ -49,6 +81,8 @@ function save(){
 /* id 부여 · 정렬 · 누락 필드 보정 */
 function normalize(){
   trip.docs = trip.docs || [];
+  trip.food = trip.food || [];
+  trip.food.forEach(f => { if (!f.id) f.id = uid(); });
   trip.days.forEach(d => {
     d.items = d.items || [];
     d.items.forEach(it => { if (!it.id) it.id = uid(); if (!it.type) it.type = '기타'; });
@@ -167,16 +201,21 @@ function renderOverview(){
   const items = d.items;
   const c = t => items.filter(i => i.type === t).length;
   const docsToday = trip.docs.filter(dc => (dc.title + dc.sub).includes(fmtMD(d.date)));
+  const food = d.city ? trip.food.filter(f => f.city === d.city) : [];
+  const hasGeo = items.some(i => i.lat != null && i.lng != null);
 
   $('#viewOverview').innerHTML = `
-    <div class="map-box">
+    ${hasGeo ? `<div class="map-box">
       <div id="map" class="map"></div>
       <div class="map-bar">
         <div class="cur" id="mapCur">지도에서 핀을 눌러보세요</div>
-        <button class="mini" id="btnFit">전체보기</button>
-        <button class="mini solid" id="btnBig">크게</button>
+        <button class="mini" id="btnFit">전체</button>
+        <button class="mini" id="btnBig">크게</button>
+        <button class="mini solid" id="btnGmap">구글맵</button>
       </div>
-    </div>
+    </div>` : `<div class="map-box"><div class="empty" style="padding:26px 20px">
+      <span class="em">🗺️</span>일정에 <b>좌표</b>를 넣으면<br>여기에 오늘의 동선이 그려져요
+    </div></div>`}
 
     <div class="stats">
       <div class="stat"><div class="n mono">${items.length}</div><div class="l">일정</div></div>
@@ -198,15 +237,28 @@ function renderOverview(){
 
     <div class="wrap">
       <div class="card">
-        <div class="card-h"><span class="dot"></span>획득한 뱃지<span class="sub">${BADGES.filter(b=>b.ok(trip)).length} / ${BADGES.length}</span></div>
-        <div class="badges">${BADGES.map(b => `
-          <div class="badge ${b.ok(trip) ? 'got' : ''}">
-            <div class="e">${b.e}</div><div class="n">${b.n}</div>
-          </div>`).join('')}</div>
-        <div style="height:12px"></div>
+        <div class="card-h"><span class="dot"></span>${d.city ? esc(d.city) + ' 맛집' : '맛집 리스트'}<span class="sub">${food.length}곳</span></div>
+        <div class="card-note"><span>🍽️</span><span>${d.city
+          ? '내가 저장해둔 <b>' + esc(d.city) + '</b> 맛집이에요 · 탭하면 지도로'
+          : '이 날의 <b>도시를 먼저 지정</b>하면 그 도시 맛집만 모아서 보여줘요'}</span></div>
+        <div>${food.map(foodRow).join('') || emptyBox(d.city
+            ? esc(d.city) + ' 맛집이 아직 없어요' : '도시를 지정해주세요', '🍜')}</div>
+        <button class="add-btn" id="btnAddFood" style="width:calc(100% - 24px);margin:10px 12px 12px">＋ ${d.city ? esc(d.city) + ' ' : ''}맛집 추가</button>
       </div>
     </div>`;
 
+  $('#btnAddFood').onclick = () => openFood(null, d.city);
+  if (!hasGeo) return;   /* 지도가 없는 날은 여기까지 */
+  $('#btnGmap').onclick = () => {
+    const pts = d.items.filter(i => i.lat != null);
+    if (!pts.length) return toast('좌표가 있는 일정이 없어요');
+    /* 구글맵 앱에서 그날 전체 동선을 경유지로 열기 (최대 10곳) */
+    const p = pts.slice(0, 10).map(i => `${i.lat},${i.lng}`);
+    const url = p.length === 1
+      ? `https://www.google.com/maps/search/?api=1&query=${p[0]}`
+      : `https://www.google.com/maps/dir/${p.join('/')}`;
+    window.open(url, '_blank', 'noopener');
+  };
   $('#btnFit').onclick = () => fitMap();
   $('#btnBig').onclick = () => { $('#map').classList.toggle('tall'); setTimeout(() => map && map.invalidateSize(), 260); };
   drawMap();
@@ -301,8 +353,23 @@ function renderMore(){
         <div class="card-h"><span class="dot"></span>여행 정보</div>
         <div style="height:8px"></div>
         <button class="set-row" id="mTrip"><span class="e">🧳</span>여행 제목 · 동행 수정<span class="ar">${esc(trip.title)} ›</span></button>
-        <button class="set-row" id="mDay"><span class="e">📅</span>날짜 / 도시 편집<span class="ar">${trip.days.length}일 ›</span></button>
-        <button class="set-row" id="mAddDay"><span class="e">➕</span>마지막에 하루 추가<span class="ar">›</span></button>
+        <button class="set-row" id="mDay"><span class="e">📅</span>날짜 · 도시 · 일수 편집<span class="ar">${trip.days.length}일 ›</span></button>
+      </div>
+
+      <div class="card">
+        <div class="card-h"><span class="dot"></span>맛집<span class="sub">${trip.food.length}곳</span></div>
+        <div style="height:8px"></div>
+        <button class="set-row" id="mFood"><span class="e">🍽️</span>맛집 추가<span class="ar">›</span></button>
+        <div class="card-note"><span>💡</span><span>맛집에 적은 <b>도시</b>와 같은 도시로 지정된 날의 오버뷰에 자동으로 뜹니다.</span></div>
+      </div>
+
+      <div class="card">
+        <div class="card-h"><span class="dot"></span>획득한 뱃지<span class="sub">${BADGES.filter(b=>b.ok(trip)).length} / ${BADGES.length}</span></div>
+        <div class="badges">${BADGES.map(b => `
+          <div class="badge ${b.ok(trip) ? 'got' : ''}">
+            <div class="e">${b.e}</div><div class="n">${b.n}</div>
+          </div>`).join('')}</div>
+        <div style="height:12px"></div>
       </div>
 
       <div class="card">
@@ -312,7 +379,8 @@ function renderMore(){
         <button class="set-row" id="mImport"><span class="e">📥</span>가져오기 (JSON 복원)<span class="ar">›</span></button>
         <button class="set-row" id="mIcsAll"><span class="e">🗓️</span>전체 일정 캘린더로 (.ics)<span class="ar">›</span></button>
         <button class="set-row" id="mUncheck"><span class="e">♻️</span>완료 체크 전부 해제<span class="ar">${p.done}개 ›</span></button>
-        <button class="set-row" id="mReset" style="color:var(--hot)"><span class="e">⚠️</span>샘플 데이터로 초기화<span class="ar">›</span></button>
+        <button class="set-row" id="mSample"><span class="e">🇵🇹</span>샘플 여행 둘러보기<span class="ar">포르투갈 8일 ›</span></button>
+        <button class="set-row" id="mReset" style="color:var(--hot)"><span class="e">⚠️</span>싹 비우고 새 여행 시작<span class="ar">›</span></button>
       </div>
 
       <div class="card">
@@ -326,13 +394,23 @@ function renderMore(){
 
   $('#mTrip').onclick    = openTripEdit;
   $('#mDay').onclick     = openDayEdit;
-  $('#mAddDay').onclick  = addDay;
   $('#mExport').onclick  = exportJSON;
   $('#mImport').onclick  = () => $('#fileImport').click();
   $('#fileImport').onchange = importJSON;
   $('#mIcsAll').onclick  = () => downloadICS(trip.days.flatMap(d => d.items.map(i => [d, i])), trip.title);
   $('#mUncheck').onclick = () => { if (confirm('완료 체크를 전부 해제할까요?')){ trip.days.forEach(d => d.items.forEach(i => i.done = false)); save(); render(); toast('체크를 모두 해제했어요'); } };
-  $('#mReset').onclick   = () => { if (confirm('내가 수정한 내용이 모두 사라지고 샘플 여행으로 돌아갑니다. 계속할까요?')){ localStorage.removeItem(KEY); location.reload(); } };
+  $('#mFood').onclick    = () => openFood(null, trip.days[dayIdx].city);
+  $('#mSample').onclick  = () => {
+    if (!confirm('지금 여행 내용이 샘플로 바뀝니다. 먼저 백업하셨나요?')) return;
+    trip = structuredClone(SAMPLE_TRIP);
+    dayIdx = 0; normalize(); save(); render(); setTab('overview'); toast('샘플 여행을 불러왔어요');
+  };
+  $('#mReset').onclick   = () => {
+    if (!confirm('지금 일정 · 맛집 · 서류가 모두 지워지고 새 여행을 만듭니다. 계속할까요?')) return;
+    localStorage.removeItem(KEY);
+    trip = newTrip('나의 여행', todayStr(), addDays(todayStr(), 2), '');
+    dayIdx = 0; normalize(); save(); render(); setTab('overview'); openSetup();
+  };
   $('#mTheme').onclick   = cycleTheme;
 }
 
@@ -498,6 +576,106 @@ function delItem(id){
 }
 
 /* ==========================================================
+   맛집 리스트
+   ========================================================== */
+function foodRow(f){
+  const ic = FOOD_KINDS[f.kind] || '🍽️';
+  return `<div class="food ${f.tried ? 'tried' : ''}" data-food="${f.id}">
+    <button class="food-ic" data-food-try="${f.id}" title="가봤어요">${f.tried ? '✅' : ic}</button>
+    <div class="food-b">
+      <div class="food-t">${esc(f.name)}</div>
+      <div class="food-s">${esc(f.kind || '맛집')}${f.note ? ' · ' + esc(f.note) : ''}</div>
+      <div class="food-btns">
+        ${f.lat != null ? `<a class="mini" href="${gmapView(f.name ? { ...f, place:f.name } : f)}" target="_blank" rel="noopener">📍 지도</a>` : ''}
+        ${f.lat != null ? `<a class="mini warm" href="${gmapDir({ ...f, move:'도보' })}" target="_blank" rel="noopener">🧭 길찾기</a>` : ''}
+        ${f.url ? `<a class="mini" href="${esc(f.url)}" target="_blank" rel="noopener">🔗 링크</a>` : ''}
+        <button class="mini cool" data-food-add="${f.id}">＋ 일정에</button>
+        <button class="mini" data-food-edit="${f.id}">✏️</button>
+      </div>
+    </div>
+  </div>`;
+}
+
+function openFood(id, defaultCity){
+  const f = id ? trip.food.find(x => x.id === id) : { kind:'맛집', city: defaultCity || '' };
+  let kind = f.kind || '맛집';
+  const cities = [...new Set([...trip.days.map(d => d.city), ...trip.food.map(x => x.city)].filter(Boolean))];
+
+  sheet(id ? '맛집 편집' : '맛집 추가', `
+    <div class="f"><label>가게 이름</label><input id="fName" placeholder="예: 이치란 라멘" value="${esc(f.name || '')}"></div>
+    <div class="f"><label>도시</label><input id="fCity" list="foodCities" placeholder="예: 오사카" value="${esc(f.city || '')}">
+      <datalist id="foodCities">${cities.map(c => `<option value="${esc(c)}">`).join('')}</datalist>
+      <div class="f-hint">여기 적은 도시와 <b>같은 도시로 지정된 날</b>의 오버뷰에 나타납니다.</div>
+    </div>
+    <div class="f"><label>종류</label><div class="type-pick" id="fKind">
+      ${Object.keys(FOOD_KINDS).map(k => `<button data-t="${k}" class="${k===kind?'on':''}">${FOOD_KINDS[k]} ${k}</button>`).join('')}
+    </div></div>
+    <div class="f"><label>메모</label><input id="fNote" placeholder="예: 웨이팅 김 · 오후 3시 노려" value="${esc(f.note || '')}"></div>
+    <div class="f-row">
+      <div class="f"><label>위도 (lat)</label><input id="fLat" inputmode="decimal" placeholder="34.6687" value="${f.lat ?? ''}"></div>
+      <div class="f"><label>경도 (lng)</label><input id="fLng" inputmode="decimal" placeholder="135.5013" value="${f.lng ?? ''}"></div>
+    </div>
+    <button class="btn ghost" id="fFind" style="margin-bottom:11px">🔎 구글 지도에서 좌표 찾기</button>
+    <div class="f"><label>링크 (선택)</label><input id="fUrl" inputmode="url" placeholder="블로그 · 인스타 주소" value="${esc(f.url || '')}"></div>
+    <div class="btn-row">
+      ${id ? '<button class="btn danger" id="fDel">삭제</button>' : ''}
+      <button class="btn" id="fSave">저장</button>
+    </div>`);
+
+  $('#fKind').onclick = e => {
+    const b = e.target.closest('[data-t]'); if (!b) return;
+    kind = b.dataset.t;
+    $$('#fKind button').forEach(x => x.classList.toggle('on', x === b));
+  };
+  $('#fFind').onclick = () => {
+    const q = [$('#fName').value, $('#fCity').value].filter(Boolean).join(' ');
+    window.open('https://www.google.com/maps/search/' + encodeURIComponent(q || '맛집 검색'), '_blank');
+  };
+  $('#fSave').onclick = () => {
+    const name = $('#fName').value.trim();
+    if (!name) return toast('가게 이름을 입력해주세요');
+    const lat = parseFloat($('#fLat').value), lng = parseFloat($('#fLng').value);
+    const obj = {
+      id: f.id || uid(), tried: f.tried || false,
+      name, city: $('#fCity').value.trim(), kind,
+      note: $('#fNote').value.trim(), url: $('#fUrl').value.trim(),
+      lat: isFinite(lat) ? lat : null, lng: isFinite(lng) ? lng : null
+    };
+    if (id) Object.assign(f, obj); else trip.food.push(obj);
+    save(); closeSheet(); render(); toast(id ? '수정했어요 ✏️' : '맛집을 저장했어요 🍽️');
+  };
+  if (id) $('#fDel').onclick = () => {
+    if (!confirm('이 맛집을 삭제할까요?')) return;
+    trip.food = trip.food.filter(x => x.id !== id);
+    save(); closeSheet(); render(); toast('삭제했어요');
+  };
+}
+
+/* 맛집 → 그날 일정으로 */
+function foodToSchedule(id){
+  const f = trip.food.find(x => x.id === id);
+  const d = trip.days[dayIdx];
+  sheet('일정에 추가', `
+    <div class="f-hint" style="margin-bottom:14px">
+      <b>${esc(f.name)}</b> 를 ${fmtMD(d.date)} (${fmtDow(d.date)}) 일정에 넣습니다.
+    </div>
+    <div class="f-row">
+      <div class="f" style="flex:0 0 130px"><label>시간</label><input type="time" id="fsTime" value="12:30"></div>
+      <div class="f"><label>이동수단 (선택)</label><input id="fsMove" placeholder="예: 🚶 도보 10분"></div>
+    </div>
+    <button class="btn" id="fsGo">추가</button>`);
+  $('#fsGo').onclick = () => {
+    d.items.push({
+      id: uid(), time: $('#fsTime').value || '12:30', title: f.name, type:'식당',
+      move: $('#fsMove').value.trim(), place: f.name, note: f.note || '',
+      lat: f.lat ?? null, lng: f.lng ?? null, done:false
+    });
+    d.items.sort((a,b) => a.time.localeCompare(b.time));
+    save(); closeSheet(); setTab('schedule'); render(); toast('일정에 넣었어요 ✨');
+  };
+}
+
+/* ==========================================================
    서류 편집 시트
    ========================================================== */
 function openDoc(id){
@@ -585,36 +763,142 @@ function openTripEdit(){
   };
 }
 function openDayEdit(){
-  sheet('날짜 / 도시', trip.days.map((d, i) => `
-    <div class="f-row">
-      <div class="f" style="flex:0 0 150px"><label>${i+1}일차 날짜</label><input type="date" data-d="${i}" class="dDate" value="${d.date}"></div>
-      <div class="f"><label>도시</label><input data-d="${i}" class="dCity" value="${esc(d.city || '')}" placeholder="도시"></div>
-    </div>
-    <div class="f"><label>${i+1}일차 메모</label><input data-d="${i}" class="dMemo" value="${esc(d.memo || '')}" placeholder="그날의 한 줄"></div>
-    ${d.items.length === 0 ? `<button class="btn danger" data-rm="${i}" style="margin-bottom:14px">${i+1}일차 삭제 (빈 날)</button>` : '<div style="height:10px"></div>'}
-  `).join('') + '<button class="btn" id="dySave">저장</button>');
+  const cities = [...new Set(trip.days.map(d => d.city).filter(Boolean))];
 
-  $('.sheet-in').addEventListener('click', e => {
+  const rows = () => trip.days.map((d, i) => `
+    <div class="day-row">
+      <div class="day-row-n">
+        <b>${i+1}일차</b>
+        <span class="mono">${fmtMD(d.date)} (${fmtDow(d.date)})</span>
+        ${d.items.length ? `<em>일정 ${d.items.length}</em>` : '<em class="mute">비어있음</em>'}
+        <button class="row-x" data-rm="${i}" title="이 날 삭제">✕</button>
+      </div>
+      <input class="dCity" data-d="${i}" list="cityList" value="${esc(d.city || '')}" placeholder="도시 (예: 파리)">
+      <input class="dMemo" data-d="${i}" value="${esc(d.memo || '')}" placeholder="그날 한 줄 메모 (선택)">
+    </div>`).join('');
+
+  sheet('날짜 / 도시', `
+    <div class="f-hint" style="margin-bottom:12px">
+      여행 기간을 바꾸면 날짜가 <b>시작일부터 순서대로</b> 다시 매겨집니다.
+      늘리면 빈 날이 추가되고, 줄이면 뒤쪽 날이 사라져요.
+    </div>
+    <div class="f-row">
+      <div class="f"><label>시작일</label><input type="date" id="rgStart" value="${trip.days[0].date}"></div>
+      <div class="f"><label>종료일</label><input type="date" id="rgEnd" value="${trip.days[trip.days.length-1].date}"></div>
+    </div>
+    <button class="btn ghost" id="rgApply" style="margin-bottom:6px">기간 적용</button>
+
+    <div class="f-row" style="margin:14px 0 4px">
+      <div class="f" style="margin:0"><label>도시 일괄 지정 (선택)</label>
+        <div class="f-row">
+          <input id="bulkCity" list="cityList" placeholder="예: 오사카" style="flex:1">
+          <button class="btn ghost" id="bulkGo" style="width:auto;padding:11px 14px;margin:0">전체 적용</button>
+        </div>
+      </div>
+    </div>
+
+    <datalist id="cityList">${cities.map(c => `<option value="${esc(c)}">`).join('')}</datalist>
+
+    <div style="height:8px"></div>
+    <div id="dayRows">${rows()}</div>
+
+    <button class="btn ghost" id="dyAdd">＋ 마지막에 하루 추가</button>
+    <button class="btn" id="dySave">저장</button>`);
+
+  const readInputs = () => {
+    $$('#dayRows .dCity').forEach(i => { const d = trip.days[+i.dataset.d]; if (d) d.city = i.value.trim(); });
+    $$('#dayRows .dMemo').forEach(i => { const d = trip.days[+i.dataset.d]; if (d) d.memo = i.value.trim(); });
+  };
+  const redraw = () => { $('#dayRows').innerHTML = rows(); };
+
+  /* 기간 적용 — 날짜 다시 매기고 개수 맞추기 */
+  $('#rgApply').onclick = () => {
+    readInputs();
+    const a = $('#rgStart').value, b = $('#rgEnd').value;
+    if (!a || !b) return toast('시작일과 종료일을 골라주세요');
+    if (b < a) return toast('종료일이 시작일보다 빨라요');
+    const dates = dateRange(a, b);
+    if (dates.length > 60) return toast('최대 60일까지만 됩니다');
+
+    const cut = trip.days.slice(dates.length).filter(d => d.items.length);
+    if (cut.length && !confirm(`일정이 들어있는 ${cut.length}일이 삭제됩니다. 계속할까요?`)) return;
+
+    const last = trip.days[trip.days.length-1];
+    trip.days = dates.map((date, i) => trip.days[i]
+      ? { ...trip.days[i], date }
+      : { date, city: last.city || '', memo:'', items:[] });
+    dayIdx = Math.min(dayIdx, trip.days.length-1);
+    save(); redraw(); render();
+    toast(`${trip.days.length}일 여행으로 바꿨어요`);
+  };
+
+  $('#bulkGo').onclick = () => {
+    const c = $('#bulkCity').value.trim();
+    if (!c) return toast('도시를 입력해주세요');
+    readInputs();
+    trip.days.forEach(d => d.city = c);
+    save(); redraw(); render(); toast(`전부 "${c}" 로 지정했어요`);
+  };
+
+  $('#dyAdd').onclick = () => {
+    readInputs();
+    const last = trip.days[trip.days.length-1];
+    trip.days.push({ date: addDays(last.date, 1), city: last.city || '', memo:'', items:[] });
+    save(); redraw(); render(); toast('하루 추가했어요');
+  };
+
+  $('#dayRows').onclick = e => {
     const b = e.target.closest('[data-rm]'); if (!b) return;
-    trip.days.splice(+b.dataset.rm, 1);
-    dayIdx = Math.min(dayIdx, trip.days.length - 1);
-    save(); closeSheet(); render(); toast('삭제했어요');
-  });
+    if (trip.days.length <= 1) return toast('최소 하루는 있어야 해요');
+    const i = +b.dataset.rm, d = trip.days[i];
+    if (d.items.length && !confirm(`${fmtMD(d.date)} 의 일정 ${d.items.length}개도 함께 삭제됩니다. 계속할까요?`)) return;
+    readInputs();
+    trip.days.splice(i, 1);
+    /* 남은 날짜를 시작일부터 다시 순서대로 */
+    const s0 = trip.days[0].date;
+    trip.days.forEach((x, n) => x.date = addDays(s0, n));
+    dayIdx = Math.min(dayIdx, trip.days.length-1);
+    save(); redraw(); render(); toast('삭제했어요');
+  };
+
   $('#dySave').onclick = () => {
-    $$('.dDate').forEach(i => trip.days[+i.dataset.d].date = i.value);
-    $$('.dCity').forEach(i => trip.days[+i.dataset.d].city = i.value.trim());
-    $$('.dMemo').forEach(i => trip.days[+i.dataset.d].memo = i.value.trim());
-    trip.days.sort((a,b) => a.date.localeCompare(b.date));
+    readInputs();
     save(); closeSheet(); render(); toast('저장했어요');
   };
 }
-function addDay(){
-  const last = trip.days[trip.days.length - 1];
-  const d = parseD(last.date); d.setDate(d.getDate() + 1);
-  const s = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
-  trip.days.push({ date:s, city:last.city, memo:'', items:[] });
-  dayIdx = trip.days.length - 1;
-  save(); render(); toast(`${fmtMD(s)} 추가했어요`);
+
+/* 첫 실행 — 여행 만들기 */
+function openSetup(){
+  sheet('여행 만들기 ✈️', `
+    <div class="f-hint" style="margin-bottom:14px">
+      먼저 큰 틀만 정해요. 세부 일정은 나중에 얼마든지 바꿀 수 있습니다.
+    </div>
+    <div class="f"><label>여행 이름</label><input id="suT" placeholder="예: 오사카 4일" value=""></div>
+    <div class="f-row">
+      <div class="f"><label>시작일</label><input type="date" id="suS" value="${todayStr()}"></div>
+      <div class="f"><label>종료일</label><input type="date" id="suE" value="${addDays(todayStr(), 3)}"></div>
+    </div>
+    <div class="f"><label>도시 (선택 — 나중에 날짜별로 다르게 지정 가능)</label><input id="suC" placeholder="예: 오사카"></div>
+    <div class="f"><label>동행 (선택 · 쉼표로 구분)</label><input id="suP" placeholder="예: 나, 짝꿍"></div>
+    <button class="btn" id="suGo">이 여행으로 시작</button>
+    <button class="btn ghost" id="suSample">샘플 여행 둘러보기 (포르투갈 8일)</button>`);
+
+  $('#suGo').onclick = () => {
+    const a = $('#suS').value, b = $('#suE').value;
+    if (!a || !b) return toast('날짜를 골라주세요');
+    if (b < a) return toast('종료일이 시작일보다 빨라요');
+    if (dateRange(a, b).length > 60) return toast('최대 60일까지만 됩니다');
+    const city = $('#suC').value.trim();
+    trip = newTrip($('#suT').value.trim() || '나의 여행', a, b, city);
+    trip.travelers = $('#suP').value.split(',').map(x => x.trim()).filter(Boolean);
+    dayIdx = 0; normalize(); save(); closeSheet(); render();
+    toast('시작해볼까요 ✈️');
+  };
+  $('#suSample').onclick = () => {
+    trip = structuredClone(SAMPLE_TRIP);
+    dayIdx = 0; normalize(); save(); closeSheet(); render();
+    toast('샘플 여행을 불러왔어요');
+  };
 }
 
 /* ==========================================================
@@ -804,6 +1088,16 @@ function bind(){
       return downloadICS([[d, it]], it.title);
     }
     const dc = e.target.closest('[data-doc]'); if (dc) return openDocFile(dc.dataset.doc);
+
+    const fe = e.target.closest('[data-food-edit]'); if (fe) return openFood(fe.dataset.foodEdit);
+    const fa = e.target.closest('[data-food-add]');  if (fa) return foodToSchedule(fa.dataset.foodAdd);
+    const ft = e.target.closest('[data-food-try]');
+    if (ft){
+      const f = trip.food.find(x => x.id === ft.dataset.foodTry);
+      f.tried = !f.tried; save(); render();
+      if (f.tried) toast('가봤어요 표시 ✅');
+      return;
+    }
   });
 
   /* 좌우 스와이프로 날짜 이동 */
@@ -848,6 +1142,7 @@ function start(){
   bind();
   setTab('overview');
   render();
+  if (firstRun) openSetup();
   if ('serviceWorker' in navigator) navigator.serviceWorker.register('./sw.js').catch(() => {});
 }
 document.addEventListener('DOMContentLoaded', start);
