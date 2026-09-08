@@ -13,6 +13,7 @@ let trip = null;      // 여행 데이터
 let dayIdx = 0;       // 선택된 일자
 let tab = 'overview'; // overview | schedule | docs | more
 let map = null, layer = null, mapReady = false;
+let showFoodPins = true;
 
 const TYPES = {
   '명소': { e:'📍', c:'var(--accent)' },
@@ -211,6 +212,7 @@ function renderOverview(){
         <div class="cur" id="mapCur">지도에서 핀을 눌러보세요</div>
         <button class="mini" id="btnFit">전체</button>
         <button class="mini" id="btnBig">크게</button>
+        <button class="mini" id="btnFood">🍽️ 맛집</button>
         <button class="mini solid" id="btnGmap">구글맵</button>
       </div>
     </div>` : `<div class="map-box"><div class="empty" style="padding:26px 20px">
@@ -249,6 +251,9 @@ function renderOverview(){
 
   $('#btnAddFood').onclick = () => openFood(null, d.city);
   if (!hasGeo) return;   /* 지도가 없는 날은 여기까지 */
+  const fb = $('#btnFood');
+  fb.classList.toggle('warm', showFoodPins);
+  fb.onclick = () => { showFoodPins = !showFoodPins; fb.classList.toggle('warm', showFoodPins); plotDay(); };
   $('#btnGmap').onclick = () => {
     const pts = d.items.filter(i => i.lat != null);
     if (!pts.length) return toast('좌표가 있는 일정이 없어요');
@@ -459,6 +464,24 @@ function plotDay(){
     line.push([it.lat, it.lng]);
   });
   L.polyline(line, { color:'#5b4bd6', weight:3, opacity:.55, dashArray:'7 8' }).addTo(layer);
+
+  /* 그 도시에 저장해둔 맛집도 같이 — 구글지도엔 없는, 내 리스트 기준의 그림 */
+  if (showFoodPins){
+    const city = trip.days[dayIdx].city;
+    trip.food.filter(f => f.city === city && f.lat != null).forEach(f => {
+      const icon = L.divIcon({
+        className:'', iconSize:[24,24], iconAnchor:[12,12], popupAnchor:[0,-14],
+        html:`<div class="fpin ${f.tried ? 'tried' : ''}">${FOOD_KINDS[f.kind] || '🍽️'}</div>`
+      });
+      L.marker([f.lat, f.lng], { icon }).addTo(layer).bindPopup(`
+        <div class="pop-t">${esc(f.name)}</div>
+        <div class="pop-s">${esc(f.kind || '맛집')}${f.note ? ' · ' + esc(f.note) : ''}</div>
+        <div class="pop-b">
+          <a href="${gmapDir({ ...f, move:'도보' })}" target="_blank" rel="noopener">길찾기</a>
+          <a class="alt" href="#" onclick="foodToSchedule('${f.id}');return false;">일정에 추가</a>
+        </div>`);
+    });
+  }
   fitMap(line);
 }
 function fitMap(line){
@@ -511,6 +534,143 @@ function goNow(){
 }
 
 /* ==========================================================
+   위치 고르기 — 이름 검색 · 붙여넣기 · 현재 위치
+   좌표를 직접 타이핑할 일이 없도록.
+   검색은 OpenStreetMap(Nominatim) — 무료, API 키 없음.
+   ========================================================== */
+let locState = { lat:null, lng:null, place:'' };
+
+function locHTML(){
+  return `
+  <div class="f">
+    <label>위치</label>
+    <div class="loc">
+      <div class="loc-cur" id="locCur"></div>
+      <div class="loc-search">
+        <input id="locQ" placeholder="장소 이름으로 검색" enterkeyhint="search" autocomplete="off">
+        <button type="button" id="locGo">검색</button>
+      </div>
+      <div id="locRes"></div>
+      <div class="loc-alt">
+        <button type="button" id="locPaste">📋 좌표 붙여넣기</button>
+        <button type="button" id="locHere">📍 현재 위치</button>
+        <button type="button" id="locClear">✕ 지우기</button>
+      </div>
+      <div id="locPasteBox" class="hidden">
+        <input id="locPasteIn" placeholder="여기에 붙여넣기" autocomplete="off">
+        <div class="f-hint">구글 지도에서 장소를 <b>길게 눌러</b> 나오는 좌표(<code>34.6687, 135.5013</code>)를
+        복사해 붙여넣거나, 지도 <b>주소창 전체</b>를 그대로 붙여넣어도 됩니다.</div>
+      </div>
+    </div>
+  </div>`;
+}
+
+/* 붙여넣은 글자에서 좌표 뽑아내기 */
+function parseLatLng(t){
+  const pats = [
+    /@(-?\d{1,3}\.\d{3,}),\s*(-?\d{1,3}\.\d{3,})/,          // 구글맵 주소 @lat,lng
+    /!3d(-?\d{1,3}\.\d{3,})!4d(-?\d{1,3}\.\d{3,})/,           // 구글맵 내부 형식
+    /[?&](?:q|query|ll|sll|daddr|destination)=(-?\d{1,3}\.\d{3,}),\s*(-?\d{1,3}\.\d{3,})/,
+    /(-?\d{1,3}\.\d{3,})\s*[,/]\s*(-?\d{1,3}\.\d{3,})/       // 그냥 "34.66, 135.50"
+  ];
+  for (const p of pats){
+    const m = String(t).match(p);
+    if (m){
+      const a = +m[1], b = +m[2];
+      if (Math.abs(a) <= 90 && Math.abs(b) <= 180) return [a, b];
+    }
+  }
+  return null;
+}
+
+/* opts: { nameSel: 이름 input 셀렉터, city: 검색에 덧붙일 도시 } */
+function bindLoc(init, opts = {}){
+  locState = { lat: init.lat ?? null, lng: init.lng ?? null, place: init.place || '' };
+  drawLoc();
+
+  const search = async () => {
+    const raw = ($('#locQ').value || (opts.nameSel && $(opts.nameSel).value) || '').trim();
+    if (!raw) return toast('찾을 장소 이름을 적어주세요');
+    /* 도시를 덧붙여 정확도 올리기 */
+    const q = (opts.city && !raw.includes(opts.city)) ? `${raw} ${opts.city}` : raw;
+    $('#locRes').innerHTML = '<div class="loc-msg">찾는 중…</div>';
+    try{
+      const r = await fetch('https://nominatim.openstreetmap.org/search?format=jsonv2&limit=6&addressdetails=1'
+        + '&accept-language=ko&q=' + encodeURIComponent(q));
+      const list = await r.json();
+      if (!list.length){
+        $('#locRes').innerHTML = `<div class="loc-msg">결과가 없어요. 이름을 바꾸거나
+          <b>영어 이름</b>으로 해보세요. 안 되면 좌표를 붙여넣어도 됩니다.</div>`;
+        return;
+      }
+      $('#locRes').innerHTML = list.map((x, i) => `
+        <button type="button" class="loc-hit" data-i="${i}">
+          <b>${esc(x.name || x.display_name.split(',')[0])}</b>
+          <span>${esc(x.display_name)}</span>
+        </button>`).join('');
+      $('#locRes').onclick = e => {
+        const b = e.target.closest('[data-i]'); if (!b) return;
+        const x = list[+b.dataset.i];
+        locState = { lat:+x.lat, lng:+x.lon, place: x.name || x.display_name.split(',')[0] };
+        if (opts.nameSel && !$(opts.nameSel).value.trim()) $(opts.nameSel).value = locState.place;
+        $('#locRes').innerHTML = ''; $('#locQ').value = '';
+        drawLoc(); toast('위치를 넣었어요 📍');
+      };
+    }catch(_){
+      $('#locRes').innerHTML = `<div class="loc-msg">검색에 실패했어요 (인터넷 확인).
+        좌표 붙여넣기를 쓰세요.</div>`;
+    }
+  };
+
+  $('#locGo').onclick = search;
+  $('#locQ').onkeydown = e => { if (e.key === 'Enter'){ e.preventDefault(); search(); } };
+
+  $('#locPaste').onclick = () => $('#locPasteBox').classList.toggle('hidden');
+  $('#locPasteIn').oninput = e => {
+    const p = parseLatLng(e.target.value);
+    if (!p) return;
+    locState.lat = p[0]; locState.lng = p[1];
+    if (!locState.place && opts.nameSel) locState.place = $(opts.nameSel).value.trim();
+    e.target.value = ''; $('#locPasteBox').classList.add('hidden');
+    drawLoc(); toast('좌표를 넣었어요 📍');
+  };
+
+  $('#locHere').onclick = () => {
+    if (!navigator.geolocation) return toast('이 브라우저는 위치를 못 가져와요');
+    toast('현재 위치 확인 중…');
+    navigator.geolocation.getCurrentPosition(
+      pos => {
+        locState.lat = +pos.coords.latitude.toFixed(6);
+        locState.lng = +pos.coords.longitude.toFixed(6);
+        drawLoc(); toast('현재 위치로 지정했어요 📍');
+      },
+      () => toast('위치 권한이 필요해요'),
+      { enableHighAccuracy:true, timeout:8000 }
+    );
+  };
+
+  $('#locClear').onclick = () => {
+    locState = { lat:null, lng:null, place: locState.place };
+    drawLoc(); toast('위치를 지웠어요');
+  };
+}
+
+function drawLoc(){
+  const el = $('#locCur'); if (!el) return;
+  if (locState.lat == null){
+    el.className = 'loc-cur none';
+    el.innerHTML = '아직 위치가 없어요 — 아래에서 검색하거나 좌표를 붙여넣으세요';
+    return;
+  }
+  el.className = 'loc-cur';
+  el.innerHTML = `<span class="pin-em">📍</span>
+    <span class="loc-name">${esc(locState.place || '지정한 위치')}</span>
+    <span class="mono loc-xy">${locState.lat.toFixed(4)}, ${locState.lng.toFixed(4)}</span>
+    <a class="loc-see" href="https://www.google.com/maps/search/?api=1&query=${locState.lat},${locState.lng}"
+       target="_blank" rel="noopener">확인 ›</a>`;
+}
+
+/* ==========================================================
    일정 편집 시트
    ========================================================== */
 function openItem(id){
@@ -528,12 +688,7 @@ function openItem(id){
     </div></div>
     <div class="f"><label>이동수단 / 교통 메모</label><input id="iMove" placeholder="예: 🚶 도보 10분 / 🚋 트램 28" value="${esc(it.move || '')}"></div>
     <div class="f"><label>장소 이름</label><input id="iPlace" placeholder="예: Livraria Lello" value="${esc(it.place || '')}"></div>
-    <div class="f-row">
-      <div class="f"><label>위도 (lat)</label><input id="iLat" inputmode="decimal" placeholder="41.1470" value="${it.lat ?? ''}"></div>
-      <div class="f"><label>경도 (lng)</label><input id="iLng" inputmode="decimal" placeholder="-8.6148" value="${it.lng ?? ''}"></div>
-    </div>
-    <div class="f-hint">💡 좌표 찾기: 구글 지도에서 장소를 <b>길게 눌러</b> 나오는 숫자(37.5, 127.0)를 그대로 붙여넣으면 됩니다. 아래 버튼으로 검색창을 열 수도 있어요.</div>
-    <button class="btn ghost" id="iFind" style="margin-bottom:11px">🔎 구글 지도에서 좌표 찾기</button>
+    ${locHTML()}
     <div class="f"><label>메모</label><textarea id="iNote" placeholder="예약번호, 팁, 메뉴 등">${esc(it.note || '')}</textarea></div>
     <div class="f"><label>⚠️ 주의사항</label><input id="iWarn" placeholder="예: 시간지정 입장권 · 늦으면 무효" value="${esc(it.warn || '')}"></div>
     <div class="btn-row">
@@ -546,20 +701,16 @@ function openItem(id){
     type = b.dataset.t;
     $$('#iType button').forEach(x => x.classList.toggle('on', x === b));
   };
-  $('#iFind').onclick = () => {
-    const q = $('#iPlace').value || $('#iTitle').value;
-    window.open('https://www.google.com/maps/search/' + encodeURIComponent(q || '위치 검색'), '_blank');
-  };
+  bindLoc({ lat: it.lat, lng: it.lng, place: it.place }, { nameSel:'#iPlace', city: d.city });
   $('#iSave').onclick = () => {
     const title = $('#iTitle').value.trim();
     if (!title) return toast('제목을 입력해주세요');
-    const lat = parseFloat($('#iLat').value), lng = parseFloat($('#iLng').value);
     const obj = {
       id: it.id || uid(), done: it.done || false,
       time: $('#iTime').value || '09:00', title, type,
-      move: $('#iMove').value.trim(), place: $('#iPlace').value.trim(),
+      move: $('#iMove').value.trim(), place: $('#iPlace').value.trim() || locState.place,
       note: $('#iNote').value.trim(), warn: $('#iWarn').value.trim(),
-      lat: isFinite(lat) ? lat : null, lng: isFinite(lng) ? lng : null
+      lat: locState.lat, lng: locState.lng
     };
     if (id) Object.assign(it, obj); else d.items.push(obj);
     d.items.sort((a,b) => a.time.localeCompare(b.time));
@@ -611,11 +762,7 @@ function openFood(id, defaultCity){
       ${Object.keys(FOOD_KINDS).map(k => `<button data-t="${k}" class="${k===kind?'on':''}">${FOOD_KINDS[k]} ${k}</button>`).join('')}
     </div></div>
     <div class="f"><label>메모</label><input id="fNote" placeholder="예: 웨이팅 김 · 오후 3시 노려" value="${esc(f.note || '')}"></div>
-    <div class="f-row">
-      <div class="f"><label>위도 (lat)</label><input id="fLat" inputmode="decimal" placeholder="34.6687" value="${f.lat ?? ''}"></div>
-      <div class="f"><label>경도 (lng)</label><input id="fLng" inputmode="decimal" placeholder="135.5013" value="${f.lng ?? ''}"></div>
-    </div>
-    <button class="btn ghost" id="fFind" style="margin-bottom:11px">🔎 구글 지도에서 좌표 찾기</button>
+    ${locHTML()}
     <div class="f"><label>링크 (선택)</label><input id="fUrl" inputmode="url" placeholder="블로그 · 인스타 주소" value="${esc(f.url || '')}"></div>
     <div class="btn-row">
       ${id ? '<button class="btn danger" id="fDel">삭제</button>' : ''}
@@ -627,19 +774,15 @@ function openFood(id, defaultCity){
     kind = b.dataset.t;
     $$('#fKind button').forEach(x => x.classList.toggle('on', x === b));
   };
-  $('#fFind').onclick = () => {
-    const q = [$('#fName').value, $('#fCity').value].filter(Boolean).join(' ');
-    window.open('https://www.google.com/maps/search/' + encodeURIComponent(q || '맛집 검색'), '_blank');
-  };
+  bindLoc({ lat: f.lat, lng: f.lng, place: f.name }, { nameSel:'#fName', city: f.city || defaultCity || '' });
   $('#fSave').onclick = () => {
     const name = $('#fName').value.trim();
     if (!name) return toast('가게 이름을 입력해주세요');
-    const lat = parseFloat($('#fLat').value), lng = parseFloat($('#fLng').value);
     const obj = {
       id: f.id || uid(), tried: f.tried || false,
       name, city: $('#fCity').value.trim(), kind,
       note: $('#fNote').value.trim(), url: $('#fUrl').value.trim(),
-      lat: isFinite(lat) ? lat : null, lng: isFinite(lng) ? lng : null
+      lat: locState.lat, lng: locState.lng
     };
     if (id) Object.assign(f, obj); else trip.food.push(obj);
     save(); closeSheet(); render(); toast(id ? '수정했어요 ✏️' : '맛집을 저장했어요 🍽️');
