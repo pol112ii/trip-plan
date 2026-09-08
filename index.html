@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,maximum-scale=1">
+<title>여행 플래너</title>
+<meta name="description" content="폰에서 바로 쓰는 여행 계획표 — 지도 · 일정 · 예약 서류">
+<meta name="theme-color" content="#5b4bd6">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="여행 플래너">
+<link rel="manifest" href="./manifest.json">
+<link rel="apple-touch-icon" href="./icon.svg">
+<link rel="icon" href="./icon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+<link rel="stylesheet" href="./styles.css">
+</head>
+<body>
+
+<div id="app">
+
+  <!-- 헤더 -->
+  <header class="hero">
+    <div class="hero-top">
+      <div>
+        <h1 class="hero-title" id="heroTitle">여행 플래너</h1>
+        <div class="hero-sub" id="heroSub"></div>
+      </div>
+      <div class="hero-actions">
+        <button class="icon-btn" id="btnShare" title="오늘 일정 공유">📤</button>
+        <button class="icon-btn" id="btnMore" title="설정">⚙️</button>
+      </div>
+    </div>
+    <div class="xp">
+      <div class="xp-head">
+        <span class="lv" id="xpLv">Lv.</span>
+        <span class="rt" id="xpRt"></span>
+      </div>
+      <div class="xp-bar"><div class="xp-fill" id="xpFill" style="width:0%"></div></div>
+    </div>
+  </header>
+
+  <!-- 탭 -->
+  <nav class="tabs" id="tabs">
+    <button class="tab on" data-tab="overview">🗺️ 오버뷰</button>
+    <button class="tab"    data-tab="schedule">📋 일정</button>
+    <button class="tab"    data-tab="docs">📎 서류</button>
+    <button class="tab"    data-tab="more">⚙️ 설정</button>
+  </nav>
+
+  <!-- 날짜 -->
+  <div class="days" id="days"></div>
+
+  <!-- 뷰 -->
+  <main>
+    <section id="viewOverview"></section>
+    <section id="viewSchedule" class="hidden"></section>
+    <section id="viewDocs"     class="hidden"></section>
+    <section id="viewMore"     class="hidden"></section>
+  </main>
+</div>
+
+<!-- 하단 네비 -->
+<nav class="nav">
+  <div class="nav-in">
+    <button id="navPrev">◀ 이전</button>
+    <button id="navNow" class="now">📍 지금</button>
+    <button id="navNext">다음 ▶</button>
+  </div>
+</nav>
+
+<div id="toast"></div>
+<div id="fx"></div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script src="./data.js"></script>
+<script src="./app.js"></script>
+</body>
+</html>
