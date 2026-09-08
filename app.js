@@ -680,7 +680,7 @@ function openItem(id){
 
   sheet(id ? '일정 편집' : '일정 추가', `
     <div class="f-row">
-      <div class="f" style="flex:0 0 118px"><label>시간</label><input type="time" id="iTime" value="${esc(it.time || '09:00')}"></div>
+      <div class="f narrow"><label>시간</label><input type="time" id="iTime" value="${esc(it.time || '09:00')}"></div>
       <div class="f"><label>제목</label><input id="iTitle" placeholder="예: 렐루 서점" value="${esc(it.title || '')}"></div>
     </div>
     <div class="f"><label>종류</label><div class="type-pick" id="iType">
@@ -803,7 +803,7 @@ function foodToSchedule(id){
       <b>${esc(f.name)}</b> 를 ${fmtMD(d.date)} (${fmtDow(d.date)}) 일정에 넣습니다.
     </div>
     <div class="f-row">
-      <div class="f" style="flex:0 0 130px"><label>시간</label><input type="time" id="fsTime" value="12:30"></div>
+      <div class="f narrow"><label>시간</label><input type="time" id="fsTime" value="12:30"></div>
       <div class="f"><label>이동수단 (선택)</label><input id="fsMove" placeholder="예: 🚶 도보 10분"></div>
     </div>
     <button class="btn" id="fsGo">추가</button>`);

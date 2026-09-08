@@ -373,8 +373,13 @@ a{color:var(--accent);text-decoration:none}
 }
 .f input:focus,.f select:focus,.f textarea:focus{border-color:var(--accent)}
 .f textarea{resize:vertical;min-height:64px;line-height:1.5}
-.f-row{display:flex;gap:9px}
-.f-row .f{flex:1}
+/* 가로 배치: 내용이 넓어지면(예: 한국어 "오전 9:00", "2026. 10. 10.")
+   칸을 밀어내지 말고 아래로 접히게 한다. min-width:0 이 없으면 flex 항목이
+   최소 내용 폭을 고집하며 옆 칸 위로 삐져나온다. */
+.f-row{display:flex;gap:9px;flex-wrap:wrap;align-items:flex-start}
+.f-row .f{flex:1 1 150px;min-width:0}
+.f-row .f.narrow{flex:1 1 128px}
+.f input,.f select,.f textarea{max-width:100%;min-width:0}
 .f-hint{font-size:11px;color:var(--text3);margin-top:4px;line-height:1.4}
 .btn{
   width:100%;padding:14px;border-radius:13px;font-size:15px;font-weight:800;
